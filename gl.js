@@ -23,6 +23,7 @@ var browserTextInputComposing = false;
 var browserTextInputSuppressNextInput = false;
 var browserTextInputCandidateX = 0;
 var browserTextInputCandidateY = 0;
+const startupAssetPaths = ["gifs/ROCKER.gif"];
 
 var plugins = [];
 var wasm_memory;
@@ -639,6 +640,35 @@ function downloadBrowserBytes(name, mime, bytes) {
     setTimeout(function () {
         URL.revokeObjectURL(url);
     }, 0);
+}
+
+async function requestAssetLoad(relativePath) {
+    if (!relativePath || !wasm_exports || typeof wasm_exports.allocate_vec_u8 !== "function" || typeof wasm_exports.mg_browser_asset_loaded !== "function") {
+        return;
+    }
+
+    try {
+        const response = await fetch(relativePath, { cache: "force-cache" });
+        if (!response.ok) {
+            throw new Error("HTTP " + response.status + " for " + relativePath);
+        }
+
+        const assetBytes = new Uint8Array(await response.arrayBuffer());
+        const encoder = new TextEncoder();
+        const pathBytes = encoder.encode(relativePath);
+
+        const pathVec = wasm_exports.allocate_vec_u8(pathBytes.length);
+        const pathHeap = new Uint8Array(wasm_memory.buffer, pathVec, pathBytes.length);
+        pathHeap.set(pathBytes, 0);
+
+        const dataVec = wasm_exports.allocate_vec_u8(assetBytes.length);
+        const dataHeap = new Uint8Array(wasm_memory.buffer, dataVec, assetBytes.length);
+        dataHeap.set(assetBytes, 0);
+
+        wasm_exports.mg_browser_asset_loaded(pathVec, pathBytes.length, dataVec, assetBytes.length);
+    } catch (error) {
+        console.warn("Failed to fetch asset", relativePath, error);
+    }
 }
 
 function forwardEmbeddedAssetToWasm(relativePath, bytes) {
@@ -2309,6 +2339,7 @@ function load(wasm_path) {
                     }
                     await bootstrapBrowserFonts();
                     await bootstrapBrowserImageStorage();
+                    await Promise.all(startupAssetPaths.map(path => requestAssetLoad(path)));
                     init_plugins(plugins);
                     obj.exports.main();
                 })
@@ -2337,6 +2368,7 @@ function load(wasm_path) {
                 }
                 await bootstrapBrowserFonts();
                 await bootstrapBrowserImageStorage();
+                await Promise.all(startupAssetPaths.map(path => requestAssetLoad(path)));
                 init_plugins(plugins);
                 obj.exports.main();
             })
